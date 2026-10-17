@@ -9,6 +9,9 @@
     const canvas = document.getElementById("game-canvas");
     const ctx = canvas.getContext("2d");
     const SCALE = 32; // pixels per world unit
+    canvas.setAttribute("tabindex", "0");
+    canvas.addEventListener("click", () => canvas.focus());
+    canvas.focus();
 
     // UI Elements
     const statPlayerPos = document.getElementById("stat-player-pos");
@@ -82,20 +85,30 @@
             );
         }
         getDepth(other) {
-            const dx1 = other.max.x - this.min.x;
-            const dx2 = this.max.x - other.min.x;
-            const dy1 = other.max.y - this.min.y;
-            const dy2 = this.max.y - other.min.y;
+            const cx1 = (this.min.x + this.max.x) * 0.5;
+            const cy1 = (this.min.y + this.max.y) * 0.5;
+            const hx1 = (this.max.x - this.min.x) * 0.5;
+            const hy1 = (this.max.y - this.min.y) * 0.5;
 
-            const ox = Math.min(dx1, dx2);
-            const oy = Math.min(dy1, dy2);
+            const cx2 = (other.min.x + other.max.x) * 0.5;
+            const cy2 = (other.min.y + other.max.y) * 0.5;
+            const hx2 = (other.max.x - other.min.x) * 0.5;
+            const hy2 = (other.max.y - other.min.y) * 0.5;
 
-            if (ox <= 0 || oy <= 0) return null;
+            const dx = cx1 - cx2;
+            const px = (hx1 + hx2) - Math.abs(dx);
+            if (px <= 0) return null;
 
-            if (ox < oy) {
-                return new Vector2(dx1 < dx2 ? -ox : ox, 0);
+            const dy = cy1 - cy2;
+            const py = (hy1 + hy2) - Math.abs(dy);
+            if (py <= 0) return null;
+
+            if (px < py) {
+                const signX = dx > 0 ? 1.0 : (dx < 0 ? -1.0 : 1.0);
+                return new Vector2(px * signX, 0.0);
             } else {
-                return new Vector2(0, dy1 < dy2 ? -oy : oy);
+                const signY = dy > 0 ? 1.0 : (dy < 0 ? -1.0 : -1.0);
+                return new Vector2(0.0, py * signY);
             }
         }
     }
@@ -138,10 +151,12 @@
         add(b) { this.bodies.push(b); }
         step(dt) {
             const subDt = dt / this.subSteps;
+            for (const b of this.bodies) {
+                if (b.type === "DYNAMIC") b.isGrounded = false;
+            }
             for (let s = 0; s < this.subSteps; s++) {
                 for (const b of this.bodies) {
                     if (b.type === "DYNAMIC") {
-                        b.isGrounded = false;
                         b.integrate(subDt, this.gravity);
                     }
                 }
@@ -214,6 +229,21 @@
         isWalkable(x, y) {
             return x >= 0 && x < this.cols && y >= 0 && y < this.rows && this.grid[y][x] === 0;
         }
+        getNearestWalkable(cell) {
+            if (this.isWalkable(cell.x, cell.y)) return cell;
+            const offsets = [
+                { dx: 0, dy: -1 }, { dx: 0, dy: -2 },
+                { dx: -1, dy: 0 }, { dx: 1, dy: 0 },
+                { dx: -1, dy: -1 }, { dx: 1, dy: -1 },
+                { dx: 0, dy: 1 }
+            ];
+            for (const o of offsets) {
+                const nx = cell.x + o.dx;
+                const ny = cell.y + o.dy;
+                if (this.isWalkable(nx, ny)) return { x: nx, y: ny };
+            }
+            return cell;
+        }
         toCell(pos) {
             return { x: Math.floor(pos.x / this.cellSize), y: Math.floor(pos.y / this.cellSize) };
         }
@@ -221,8 +251,8 @@
             return new Vector2((cx + 0.5) * this.cellSize, (cy + 0.5) * this.cellSize);
         }
         findPath(start, goal) {
-            const s = this.toCell(start);
-            const g = this.toCell(goal);
+            const s = this.getNearestWalkable(this.toCell(start));
+            const g = this.getNearestWalkable(this.toCell(goal));
             if (!this.isWalkable(s.x, s.y) || !this.isWalkable(g.x, g.y)) return [];
             if (s.x === g.x && s.y === g.y) return [this.toWorld(s.x, s.y)];
 
@@ -279,8 +309,8 @@
             return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
         }
         hasLOS(p1, p2) {
-            const c1 = this.toCell(p1);
-            const c2 = this.toCell(p2);
+            const c1 = this.getNearestWalkable(this.toCell(p1));
+            const c2 = this.getNearestWalkable(this.toCell(p2));
             let x0 = c1.x, y0 = c1.y, x1 = c2.x, y1 = c2.y;
             const dx = Math.abs(x1 - x0);
             const dy = Math.abs(y1 - y0);
@@ -414,10 +444,10 @@
         const k = e.key.toLowerCase();
         keysDown[k] = true;
 
-        if (e.code === "Space") {
+        if (e.code === "Space" || k === " " || k === "w" || k === "arrowup") {
             jumpBufferTimer = 0.15; // 150ms buffer
         }
-        if (e.key === "Shift") {
+        if (e.key === "Shift" || k === "shift") {
             tryDash();
         }
         if (k === "j") {
@@ -426,10 +456,18 @@
         if (k === "r") {
             initGame();
         }
+
+        // Prevent browser scrolling while playing
+        if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code) ||
+            [" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
+            e.preventDefault();
+        }
     });
 
     window.addEventListener("keyup", (e) => {
-        keysDown[e.key.toLowerCase()] = false;
+        const k = e.key.toLowerCase();
+        keysDown[k] = false;
+        if (e.code === "Space") keysDown[" "] = false;
     });
 
     function tryDash() {
