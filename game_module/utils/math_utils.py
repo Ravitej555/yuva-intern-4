@@ -16,3 +16,11 @@ def smooth_step(t: float) -> float:
     """Smooth hermite interpolation for t in [0,1]."""
     t = clamp(t, 0.0, 1.0)
     return t * t * (3 - 2 * t)
+
+
+def approach(current: float, target: float, max_delta: float) -> float:
+    """Move current toward target by at most max_delta, never overshooting."""
+    if current < target:
+        return min(current + max_delta, target)
+    else:
+        return max(current - max_delta, target)
